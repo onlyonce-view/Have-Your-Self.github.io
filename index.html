@@ -1,0 +1,899 @@
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { 
+  LayoutDashboard, 
+  CheckSquare, 
+  Activity, 
+  DollarSign, 
+  Plus, 
+  Trash2, 
+  CheckCircle2,
+  X,
+  Trophy,
+  Sparkles,
+  TrendingUp,
+  Calendar,
+  Zap,
+  Sun,
+  Moon,
+  CloudSun,
+  PieChart,
+  Edit3,
+  Camera,
+  Upload
+} from "lucide-react";
+import { initializeApp } from "firebase/app";
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged, 
+  signInWithCustomToken 
+} from "firebase/auth";
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  onSnapshot, 
+  setDoc,
+  serverTimestamp, 
+  query, 
+  orderBy 
+} from "firebase/firestore";
+
+// --- Firebase Configuration ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- Confetti Component ---
+const Confetti = ({ active }) => {
+  if (!active) return null;
+  
+  const particles = Array.from({ length: 50 }).map((_, i) => {
+    const style = {
+      left: '50%',
+      top: '50%',
+      backgroundColor: ['#6366f1', '#a855f7', '#ec4899', '#14b8a6', '#f59e0b'][Math.floor(Math.random() * 5)],
+      transform: `rotate(${Math.random() * 360}deg)`,
+      animation: `explode 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards`,
+      animationDelay: `${Math.random() * 0.2}s`,
+      '--x': `${(Math.random() - 0.5) * window.innerWidth}px`,
+      '--y': `${(Math.random() - 0.5) * window.innerHeight}px`,
+    };
+    return <div key={i} className="confetti-piece" style={style} />;
+  });
+
+  return <div className="fixed inset-0 pointer-events-none z-[100]">{particles}</div>;
+};
+
+// --- Global Styles & Animations ---
+const GlobalStyles = () => (
+  <style>{`
+    @keyframes explode {
+      0% { opacity: 1; transform: translate(0, 0) scale(1); }
+      100% { opacity: 0; transform: translate(var(--x), var(--y)) scale(0); }
+    }
+    .confetti-piece {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    .checkbox-bounce {
+      animation: bounce 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    @keyframes bounce {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.3); }
+      100% { transform: scale(1); }
+    }
+    
+    /* Background Animation */
+    @keyframes blob {
+      0% { transform: translate(0px, 0px) scale(1); }
+      33% { transform: translate(30px, -50px) scale(1.1); }
+      66% { transform: translate(-20px, 20px) scale(0.9); }
+      100% { transform: translate(0px, 0px) scale(1); }
+    }
+    .animate-blob {
+      animation: blob 10s infinite;
+    }
+    .animation-delay-2000 {
+      animation-delay: 2s;
+    }
+    .animation-delay-4000 {
+      animation-delay: 4s;
+    }
+    
+    /* Hide scrollbar for cleaner UI */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  `}</style>
+);
+
+// --- Main App Component ---
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState("dashboard");
+  
+  // --- Time & Theme Logic ---
+  const [timeOfDay, setTimeOfDay] = useState("morning");
+
+  useEffect(() => {
+    const updateTime = () => {
+      const hour = new Date().getHours();
+      if (hour >= 5 && hour < 12) setTimeOfDay("morning");
+      else if (hour >= 12 && hour < 17) setTimeOfDay("afternoon");
+      else setTimeOfDay("evening");
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 60000); 
+    return () => clearInterval(interval);
+  }, []);
+
+  const theme = useMemo(() => {
+    switch(timeOfDay) {
+      case 'morning': return {
+        greeting: 'Good Morning',
+        icon: Sun,
+        blobs: ['bg-orange-300', 'bg-rose-300', 'bg-amber-200'],
+        gradient: 'from-orange-500 via-amber-500 to-rose-500',
+        subtext: 'Rise and grind, Mahesh! ☀️'
+      };
+      case 'afternoon': return {
+        greeting: 'Good Afternoon',
+        icon: CloudSun,
+        blobs: ['bg-sky-400', 'bg-cyan-300', 'bg-blue-300'],
+        gradient: 'from-blue-500 via-sky-500 to-cyan-500',
+        subtext: 'Keep crushing it, brother. 🚀'
+      };
+      case 'evening': return {
+        greeting: 'Good Evening',
+        icon: Moon,
+        blobs: ['bg-indigo-500', 'bg-purple-500', 'bg-violet-500'],
+        gradient: 'from-indigo-600 via-violet-600 to-purple-600',
+        subtext: 'Time to review and relax. 🌙'
+      };
+      default: return {
+        greeting: 'Hello',
+        icon: Sparkles,
+        blobs: ['bg-gray-300', 'bg-slate-300', 'bg-zinc-300'],
+        gradient: 'from-slate-600 to-zinc-600',
+        subtext: 'Welcome back.'
+      };
+    }
+  }, [timeOfDay]);
+
+  // --- Data State (From Firebase) ---
+  const [tasks, setTasks] = useState([]);
+  const [habits, setHabits] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [userProfile, setUserProfile] = useState({
+    budget: 10000,
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Mahesh&top=shortHair&facialHair=beardLight&clothing=blazerAndShirt" // Default fallback
+  });
+  
+  // UI State
+  const [loading, setLoading] = useState(true);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [cheerMessage, setCheerMessage] = useState("");
+  const [quickTask, setQuickTask] = useState("");
+  const [quickHabit, setQuickHabit] = useState("");
+  
+  // Modals
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseDesc, setExpenseDesc] = useState("");
+  const [expenseCategory, setExpenseCategory] = useState("Food");
+  const [newBudget, setNewBudget] = useState("");
+  
+  // Refs
+  const fileInputRef = useRef(null);
+
+  // --- Authentication ---
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth error:", error);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- Data Fetching (Real-time Sync) ---
+  useEffect(() => {
+    if (!user) return;
+
+    // Fetch Tasks
+    const tasksQuery = collection(db, 'artifacts', appId, 'users', user.uid, 'tasks');
+    const unsubTasks = onSnapshot(tasksQuery, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setTasks(data);
+    }, (err) => console.error("Tasks Error:", err));
+
+    // Fetch Habits
+    const habitsQuery = collection(db, 'artifacts', appId, 'users', user.uid, 'habits');
+    const unsubHabits = onSnapshot(habitsQuery, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHabits(data);
+    }, (err) => console.error("Habits Error:", err));
+
+    // Fetch Expenses
+    const expensesQuery = collection(db, 'artifacts', appId, 'users', user.uid, 'expenses');
+    const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      setExpenses(data);
+    }, (err) => console.error("Expenses Error:", err));
+
+    // Fetch Profile (Budget & Avatar)
+    const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
+    const unsubProfile = onSnapshot(profileRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setUserProfile(prev => ({ ...prev, ...docSnap.data() }));
+      } else {
+        // Initialize if doesn't exist
+        setDoc(profileRef, {
+          budget: 10000,
+          avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Mahesh&top=shortHair&facialHair=beardLight&clothing=blazerAndShirt"
+        });
+      }
+      setLoading(false);
+    }, (err) => console.error("Profile Error:", err));
+
+    return () => {
+      unsubTasks();
+      unsubHabits();
+      unsubExpenses();
+      unsubProfile();
+    };
+  }, [user]);
+
+  // --- Logic Helpers ---
+  const triggerCelebration = (message) => {
+    setShowConfetti(true);
+    setCheerMessage(message);
+    setTimeout(() => {
+      setShowConfetti(false);
+      setCheerMessage("");
+    }, 2500);
+  };
+
+  const formatDate = (seconds) => {
+    if (!seconds) return "Today";
+    // Convert Firestore Timestamp to Date
+    const date = new Date(seconds * 1000); 
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) return "Today";
+    if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  };
+
+  // --- Image Compression Helper ---
+  const compressImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const maxWidth = 300; // Resize to max 300px width
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Maintain aspect ratio
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Compress to JPEG at 0.7 quality
+          // This typically results in files < 50KB
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  // --- Handlers ---
+  const handleQuickAddTask = async (e) => {
+    e.preventDefault();
+    if (!quickTask.trim() || !user) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'tasks'), {
+        title: quickTask,
+        completed: false,
+        createdAt: serverTimestamp()
+      });
+      setQuickTask("");
+    } catch(err) { console.error(err); }
+  };
+
+  const toggleTask = async (id, currentStatus) => {
+    if(!user) return;
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', id), {
+        completed: !currentStatus
+      });
+      if (!currentStatus) triggerCelebration("Task crushed! Nice work Mahesh! 🔥");
+    } catch(err) { console.error(err); }
+  };
+
+  const deleteTask = async (id) => {
+    if(!user) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', id));
+    } catch(err) { console.error(err); }
+  };
+
+  const handleQuickAddHabit = async (e) => {
+    e.preventDefault();
+    if (!quickHabit.trim() || !user) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'habits'), {
+        title: quickHabit,
+        streak: 0,
+        lastCompletedDate: null,
+        createdAt: serverTimestamp()
+      });
+      setQuickHabit("");
+    } catch(err) { console.error(err); }
+  };
+
+  const incrementHabit = async (habit) => {
+    if(!user) return;
+    const today = new Date().toDateString();
+    if (habit.lastCompletedDate === today) return;
+
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'habits', habit.id), {
+        streak: habit.streak + 1,
+        lastCompletedDate: today
+      });
+      triggerCelebration("Streak +1! Discipline is everything! 🚀");
+    } catch(err) { console.error(err); }
+  };
+
+  const deleteHabit = async (id) => {
+    if(!user) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'habits', id));
+    } catch(err) { console.error(err); }
+  };
+
+  const handleAddExpense = async (e) => {
+    e.preventDefault();
+    if (!expenseAmount || !expenseDesc || !user) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'expenses'), {
+        amount: parseFloat(expenseAmount),
+        description: expenseDesc,
+        category: expenseCategory,
+        createdAt: serverTimestamp()
+      });
+      setExpenseAmount("");
+      setExpenseDesc("");
+      setShowExpenseModal(false);
+      triggerCelebration("Expense tracked! Smart money management.");
+    } catch(err) { console.error(err); }
+  };
+
+  const deleteExpense = async (id) => {
+    if(!user) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'expenses', id));
+    } catch(err) { console.error(err); }
+  };
+
+  const handleUpdateBudget = async (e) => {
+    e.preventDefault();
+    if (!newBudget || !user) return;
+    try {
+      const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
+      await setDoc(profileRef, { budget: parseFloat(newBudget) }, { merge: true });
+      setShowBudgetModal(false);
+      triggerCelebration("New budget set! Stick to it! 💰");
+    } catch(err) { console.error(err); }
+  };
+
+  const handleProfileImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !user) return;
+
+    try {
+      // Compress image before saving
+      const compressedBase64 = await compressImage(file);
+      
+      const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
+      await setDoc(profileRef, { avatar: compressedBase64 }, { merge: true });
+      triggerCelebration("Looking good, Mahesh! 📸");
+    } catch (err) {
+      console.error("Error saving image:", err);
+      alert("Something went wrong uploading the image. It might still be too large or the format is unsupported.");
+    }
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
+  // --- Derived Stats ---
+  const currentMonthStats = useMemo(() => {
+    const now = new Date();
+    const currentMonthExpenses = expenses.filter(e => {
+      if(!e.createdAt) return false;
+      const d = new Date(e.createdAt.seconds * 1000);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+    
+    const total = currentMonthExpenses.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+    const progress = Math.min((total / userProfile.budget) * 100, 100);
+    
+    // Group by date for Daily View
+    const grouped = currentMonthExpenses.reduce((acc, expense) => {
+      const dateKey = formatDate(expense.createdAt?.seconds);
+      if (!acc[dateKey]) acc[dateKey] = [];
+      acc[dateKey].push(expense);
+      return acc;
+    }, {});
+
+    return { total, progress, grouped };
+  }, [expenses, userProfile.budget]);
+
+  const completedTasks = tasks.filter(t => t.completed).length;
+  const activeTasksCount = tasks.length - completedTasks;
+  const today = new Date().toDateString();
+  const habitsDoneToday = habits.filter(h => h.lastCompletedDate === today).length;
+
+  if (loading && !user) return (
+    <div className="flex items-center justify-center min-h-screen bg-slate-50 text-slate-400">
+      <div className="animate-pulse flex flex-col items-center">
+        <Activity className="w-8 h-8 mb-2 animate-spin" />
+        <span className="text-sm font-medium">Syncing LifeOS...</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col h-screen font-sans text-slate-900 overflow-hidden relative selection:bg-indigo-500 selection:text-white transition-colors duration-1000">
+      <GlobalStyles />
+      <Confetti active={showConfetti} />
+
+      {/* --- Dynamic Background --- */}
+      <div className="fixed inset-0 z-0 bg-slate-50 transition-colors duration-1000">
+        <div className={`absolute top-0 -left-4 w-96 h-96 rounded-full mix-blend-multiply filter blur-[64px] opacity-70 animate-blob transition-colors duration-1000 ${theme.blobs[0]}`}></div>
+        <div className={`absolute top-0 -right-4 w-96 h-96 rounded-full mix-blend-multiply filter blur-[64px] opacity-70 animate-blob animation-delay-2000 transition-colors duration-1000 ${theme.blobs[1]}`}></div>
+        <div className={`absolute -bottom-8 left-20 w-96 h-96 rounded-full mix-blend-multiply filter blur-[64px] opacity-70 animate-blob animation-delay-4000 transition-colors duration-1000 ${theme.blobs[2]}`}></div>
+        <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px]"></div>
+      </div>
+      
+      {/* --- Floating Cheer Toast --- */}
+      <div className={`fixed top-24 left-1/2 transform -translate-x-1/2 z-[110] transition-all duration-500 cubic-bezier(0.34, 1.56, 0.64, 1) ${cheerMessage ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-8 scale-90 pointer-events-none'}`}>
+        <div className="bg-slate-900/90 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl font-bold flex items-center gap-2 ring-1 ring-white/20">
+          <Trophy size={18} className="text-yellow-400 fill-yellow-400" />
+          {cheerMessage}
+        </div>
+      </div>
+
+      {/* --- Glass Header --- */}
+      <header className="flex-none relative z-10 px-6 py-5 flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 bg-gradient-to-tr ${theme.gradient} rounded-xl flex items-center justify-center text-white font-bold shadow-lg transition-all duration-1000`}>
+            <Zap size={20} fill="currentColor" />
+          </div>
+          <div>
+            <h1 className="text-xl font-black tracking-tight text-slate-800 leading-none">LifeOS</h1>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Mahesh's Cloud</p>
+          </div>
+        </div>
+        
+        {/* Profile Avatar with Upload */}
+        <div className="relative group cursor-pointer" onClick={triggerFileInput}>
+          <div className="w-12 h-12 rounded-full bg-white/50 border-2 border-white shadow-md backdrop-blur-md flex items-center justify-center overflow-hidden transition-transform group-hover:scale-105">
+            <img 
+              src={userProfile.avatar} 
+              alt="User" 
+              className="w-full h-full object-cover" 
+            />
+          </div>
+          <div className="absolute inset-0 bg-black/30 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <Camera size={16} className="text-white" />
+          </div>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleProfileImageUpload} 
+            className="hidden" 
+            accept="image/*"
+          />
+        </div>
+      </header>
+
+      {/* --- Main Content (Scrollable) --- */}
+      <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-32 scroll-smooth relative z-10 no-scrollbar">
+        <div className="max-w-xl mx-auto space-y-8">
+          
+          {/* DASHBOARD TAB */}
+          {activeTab === 'dashboard' && (
+            <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
+              
+              {/* Hero Card */}
+              <div className={`bg-gradient-to-br ${theme.gradient} rounded-[2rem] p-8 text-white shadow-2xl relative overflow-hidden group transition-all duration-1000`}>
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+                <div className="relative z-10">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <theme.icon size={16} className="text-white/80" />
+                        <p className="text-white/80 font-medium text-sm uppercase tracking-wide">{theme.greeting}</p>
+                      </div>
+                      <h2 className="text-3xl font-black tracking-tight">Mahesh</h2>
+                      <p className="text-white/60 text-sm mt-1 font-medium">{theme.subtext}</p>
+                    </div>
+                    <div className="bg-white/20 backdrop-blur-md p-2 rounded-xl">
+                      <Sparkles size={20} className="text-yellow-300" />
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3 mt-8">
+                    <DashboardStat label="Pending" value={activeTasksCount} sub="Tasks" />
+                    <DashboardStat label="Done" value={habitsDoneToday} sub="Habits" />
+                    <DashboardStat label="Spent" value={`₹${currentMonthStats.total.toFixed(0)}`} sub="This Month" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Actions / Bento Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setActiveTab('tasks')} className="bg-white/60 backdrop-blur-xl p-5 rounded-3xl border border-white/40 shadow-sm hover:shadow-lg hover:scale-[1.02] transition-all text-left group">
+                  <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mb-3 group-hover:rotate-12 transition-transform">
+                    <CheckSquare size={20} />
+                  </div>
+                  <h3 className="font-bold text-slate-800">Tasks</h3>
+                  <p className="text-xs text-slate-500 mt-1">{activeTasksCount} remaining</p>
+                </button>
+                
+                <button onClick={() => setActiveTab('habits')} className="bg-white/60 backdrop-blur-xl p-5 rounded-3xl border border-white/40 shadow-sm hover:shadow-lg hover:scale-[1.02] transition-all text-left group">
+                  <div className="w-10 h-10 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mb-3 group-hover:-rotate-12 transition-transform">
+                    <Activity size={20} />
+                  </div>
+                  <h3 className="font-bold text-slate-800">Habits</h3>
+                  <p className="text-xs text-slate-500 mt-1">{habits.length} active</p>
+                </button>
+
+                <div onClick={() => setActiveTab('expenses')} className="col-span-2 bg-white/60 backdrop-blur-xl p-5 rounded-3xl border border-white/40 shadow-sm flex items-center justify-between group hover:bg-white/70 transition-all cursor-pointer">
+                   <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <TrendingUp size={24} />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-slate-800">Monthly Spend</h3>
+                        <p className="text-xs text-slate-500">
+                          {Math.round(currentMonthStats.progress)}% of budget used
+                        </p>
+                      </div>
+                   </div>
+                   <div className="text-right">
+                     <span className="text-2xl font-bold text-slate-800 block">₹{currentMonthStats.total.toFixed(0)}</span>
+                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">/ ₹{userProfile.budget}</span>
+                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TASKS TAB */}
+          {activeTab === 'tasks' && (
+            <div className="space-y-6 animate-in slide-in-from-bottom-8 duration-500">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-black text-slate-800">Tasks</h2>
+                <span className="text-xs font-bold bg-white/50 px-3 py-1 rounded-full text-slate-500 border border-white/20">{activeTasksCount} Pending</span>
+              </div>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="What's the mission?"
+                  className="w-full pl-5 pr-14 py-4 bg-white/70 backdrop-blur-xl border border-white/50 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/20 shadow-sm text-slate-800 placeholder:text-slate-400 font-medium transition-all"
+                  value={quickTask}
+                  onChange={(e) => setQuickTask(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleQuickAddTask(e)}
+                />
+                <button 
+                  onClick={handleQuickAddTask}
+                  disabled={!quickTask.trim()}
+                  className="absolute right-2 top-2 bottom-2 aspect-square bg-slate-900 text-white rounded-xl flex items-center justify-center hover:bg-indigo-600 disabled:opacity-50 disabled:hover:bg-slate-900 transition-colors shadow-lg shadow-slate-900/20"
+                >
+                  <Plus size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {tasks.map(task => (
+                  <div key={task.id} className={`group flex items-center p-4 bg-white/60 backdrop-blur-md rounded-2xl border transition-all duration-300 ${task.completed ? 'border-transparent opacity-60 grayscale' : 'border-white/40 shadow-sm hover:shadow-md hover:scale-[1.01]'}`}>
+                    <button 
+                      onClick={() => toggleTask(task.id, task.completed)}
+                      className={`flex-none w-6 h-6 rounded-full border-2 mr-4 flex items-center justify-center transition-all duration-300 ${task.completed ? 'bg-emerald-500 border-emerald-500 checkbox-bounce' : 'border-slate-300 group-hover:border-indigo-500'}`}
+                    >
+                      {task.completed && <CheckCircle2 size={14} className="text-white" />}
+                    </button>
+                    <span className={`flex-1 font-medium ${task.completed ? 'line-through decoration-2 decoration-slate-300' : 'text-slate-700'}`}>{task.title}</span>
+                    <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"><Trash2 size={18} /></button>
+                  </div>
+                ))}
+                {tasks.length === 0 && <EmptyState icon={CheckSquare} text="All clear! Add a task." />}
+              </div>
+            </div>
+          )}
+
+          {/* HABITS TAB */}
+          {activeTab === 'habits' && (
+            <div className="space-y-6 animate-in slide-in-from-bottom-8 duration-500">
+               <h2 className="text-2xl font-black text-slate-800">Habits</h2>
+               
+               <div className="relative">
+                <input
+                  type="text"
+                  placeholder="New habit to build..."
+                  className="w-full pl-5 pr-14 py-4 bg-white/70 backdrop-blur-xl border border-white/50 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/20 shadow-sm text-slate-800 placeholder:text-slate-400 font-medium transition-all"
+                  value={quickHabit}
+                  onChange={(e) => setQuickHabit(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleQuickAddHabit(e)}
+                />
+                <button 
+                  onClick={handleQuickAddHabit}
+                  disabled={!quickHabit.trim()}
+                  className="absolute right-2 top-2 bottom-2 aspect-square bg-slate-900 text-white rounded-xl flex items-center justify-center hover:bg-indigo-600 disabled:opacity-50 disabled:hover:bg-slate-900 transition-colors shadow-lg shadow-slate-900/20"
+                >
+                  <Plus size={20} />
+                </button>
+              </div>
+
+              <div className="grid gap-4">
+                {habits.map(habit => {
+                  const isDoneToday = habit.lastCompletedDate === today;
+                  return (
+                    <div key={habit.id} className="bg-white/60 backdrop-blur-xl p-5 rounded-3xl border border-white/40 shadow-sm hover:shadow-md transition-all relative overflow-hidden group">
+                      <div className="flex justify-between items-center relative z-10">
+                        <div>
+                          <h3 className="font-bold text-lg text-slate-800">{habit.title}</h3>
+                          <div className="flex items-center gap-1 mt-1 text-xs font-bold text-orange-500 bg-orange-50/80 px-2 py-1 rounded-md w-fit">
+                            <Trophy size={12} /> {habit.streak} Day Streak
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button 
+                            onClick={() => incrementHabit(habit)}
+                            disabled={isDoneToday}
+                            className={`h-10 px-5 rounded-xl font-bold transition-all flex items-center gap-2 ${isDoneToday ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-900 text-white hover:bg-indigo-600 shadow-lg shadow-slate-900/20 active:scale-95'}`}
+                          >
+                            {isDoneToday ? 'Done' : 'Check In'}
+                          </button>
+                          <button onClick={() => deleteHabit(habit.id)} className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 transition-colors"><Trash2 size={18} /></button>
+                        </div>
+                      </div>
+                      {isDoneToday && <div className="absolute inset-0 bg-emerald-500/5 z-0"></div>}
+                    </div>
+                  )
+                })}
+                {habits.length === 0 && <EmptyState icon={Activity} text="No habits yet. Start one!" />}
+              </div>
+            </div>
+          )}
+
+          {/* EXPENSES TAB */}
+          {activeTab === 'expenses' && (
+            <div className="space-y-6 animate-in slide-in-from-bottom-8 duration-500">
+               {/* Budget Card */}
+               <div className="bg-slate-900 text-white rounded-[2rem] p-6 shadow-xl relative overflow-hidden">
+                 <div className="absolute top-0 right-0 p-32 bg-indigo-500 rounded-full mix-blend-overlay filter blur-3xl opacity-20"></div>
+                 
+                 <div className="flex justify-between items-start mb-6 relative z-10">
+                   <div>
+                     <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Monthly Budget</p>
+                     <div className="flex items-center gap-2">
+                       <h2 className="text-3xl font-black">₹{userProfile.budget.toLocaleString()}</h2>
+                       <button onClick={() => setShowBudgetModal(true)} className="p-1.5 bg-white/10 rounded-lg hover:bg-white/20 transition-colors text-white/70">
+                         <Edit3 size={14} />
+                       </button>
+                     </div>
+                   </div>
+                   <div className="text-right">
+                     <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Remaining</p>
+                     <h2 className={`text-3xl font-black ${userProfile.budget - currentMonthStats.total < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                       ₹{(userProfile.budget - currentMonthStats.total).toLocaleString()}
+                     </h2>
+                   </div>
+                 </div>
+
+                 <div className="relative z-10">
+                   <div className="flex justify-between text-xs font-medium text-slate-400 mb-2">
+                     <span>Spent: ₹{currentMonthStats.total.toLocaleString()}</span>
+                     <span>{Math.round(currentMonthStats.progress)}%</span>
+                   </div>
+                   <div className="h-3 bg-white/10 rounded-full overflow-hidden">
+                     <div 
+                       className={`h-full rounded-full transition-all duration-1000 ${currentMonthStats.progress > 90 ? 'bg-rose-500' : 'bg-indigo-500'}`} 
+                       style={{ width: `${currentMonthStats.progress}%` }}
+                     ></div>
+                   </div>
+                 </div>
+               </div>
+
+              <button 
+                onClick={() => setShowExpenseModal(true)}
+                className="w-full py-4 bg-white/60 backdrop-blur-xl border border-white/50 text-slate-800 rounded-2xl font-bold hover:bg-white/80 transition-all shadow-lg shadow-slate-200/50 flex items-center justify-center gap-2 active:scale-[0.98]"
+              >
+                <Plus size={20} />
+                Log Daily Expense
+              </button>
+
+              {/* Daily Spend Breakdown */}
+              <div className="space-y-4">
+                {Object.keys(currentMonthStats.grouped).length === 0 ? (
+                   <div className="p-8 text-center text-slate-400">No transactions this month.</div>
+                ) : (
+                  Object.entries(currentMonthStats.grouped).map(([date, items]) => (
+                    <div key={date} className="animate-in slide-in-from-bottom-4">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 ml-2">{date}</h3>
+                      <div className="bg-white/60 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm divide-y divide-slate-100 overflow-hidden">
+                        {items.map(expense => (
+                          <div key={expense.id} className="p-4 flex items-center justify-between group hover:bg-white/50 transition-colors">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold text-sm">₹</div>
+                              <div>
+                                <p className="font-bold text-slate-800">{expense.description}</p>
+                                <p className="text-xs text-slate-500 font-medium">{expense.category}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <span className="font-bold text-slate-800">-₹{expense.amount}</span>
+                              <button onClick={() => deleteExpense(expense.id)} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* --- Glass Dock Navigation --- */}
+      <div className="absolute bottom-6 left-0 right-0 flex justify-center pointer-events-none z-50">
+        <div className="bg-white/70 backdrop-blur-2xl border border-white/50 shadow-2xl shadow-indigo-500/20 rounded-3xl px-6 py-3 flex items-center gap-6 pointer-events-auto transform transition-transform hover:scale-105">
+          <NavBtn active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={LayoutDashboard} />
+          <NavBtn active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} icon={CheckSquare} />
+          <NavBtn active={activeTab === 'habits'} onClick={() => setActiveTab('habits')} icon={Activity} />
+          <NavBtn active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} icon={DollarSign} />
+        </div>
+      </div>
+
+      {/* --- Expense Modal --- */}
+      {showExpenseModal && (
+        <div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center p-4 sm:p-6">
+          <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm transition-opacity" onClick={() => setShowExpenseModal(false)} />
+          <div className="bg-white/90 backdrop-blur-xl rounded-[2rem] w-full max-w-sm shadow-2xl scale-100 transform transition-all relative z-10 overflow-hidden animate-in slide-in-from-bottom-10">
+            <div className="p-6">
+               <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-black text-xl text-slate-800">Add Expense</h3>
+                  <button onClick={() => setShowExpenseModal(false)} className="p-2 rounded-full hover:bg-slate-100 text-slate-500"><X size={20} /></button>
+               </div>
+               <form onSubmit={handleAddExpense} className="space-y-4">
+                  <input autoFocus type="text" placeholder="Description (e.g. Coffee)" className="w-full p-4 bg-slate-50/50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} />
+                  <div className="flex gap-3">
+                    <input type="number" placeholder="₹ Amount" className="w-full p-4 bg-slate-50/50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} />
+                    <select className="p-4 bg-slate-50/50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700 font-medium" value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)}>
+                      <option>Food</option><option>Transport</option><option>Shopping</option><option>Bills</option><option>Other</option>
+                    </select>
+                  </div>
+                  <button className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-lg hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20 mt-2">Save</button>
+               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Budget Modal --- */}
+      {showBudgetModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6">
+          <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm transition-opacity" onClick={() => setShowBudgetModal(false)} />
+          <div className="bg-white/90 backdrop-blur-xl rounded-[2rem] w-full max-w-sm shadow-2xl scale-100 transform transition-all relative z-10 overflow-hidden animate-in zoom-in-95">
+            <div className="p-6">
+               <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-black text-xl text-slate-800">Set Monthly Budget</h3>
+                  <button onClick={() => setShowBudgetModal(false)} className="p-2 rounded-full hover:bg-slate-100 text-slate-500"><X size={20} /></button>
+               </div>
+               <form onSubmit={handleUpdateBudget} className="space-y-4">
+                  <p className="text-sm text-slate-500">How much do you want to limit your spending to this month?</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-4 text-slate-400 font-bold">₹</span>
+                    <input 
+                      autoFocus 
+                      type="number" 
+                      placeholder="e.g. 10000" 
+                      className="w-full p-4 pl-8 bg-slate-50/50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-xl" 
+                      value={newBudget} 
+                      onChange={(e) => setNewBudget(e.target.value)} 
+                    />
+                  </div>
+                  <button className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/30 mt-2">Update Budget</button>
+               </form>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Sub-Components ---
+
+function NavBtn({ active, onClick, icon: Icon }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`relative group transition-all duration-300 ${active ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
+    >
+      <div className={`absolute -inset-3 bg-indigo-100 rounded-2xl transition-all duration-300 ${active ? 'opacity-100 scale-100' : 'opacity-0 scale-50'}`}></div>
+      <Icon size={24} strokeWidth={active ? 2.5 : 2} className="relative z-10" />
+    </button>
+  );
+}
+
+function DashboardStat({ label, value, sub }) {
+  return (
+    <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3 border border-white/10 hover:bg-white/20 transition-colors">
+      <p className="text-[10px] text-indigo-100 uppercase tracking-wider font-bold opacity-80">{label}</p>
+      <p className="text-xl font-bold mt-1">{value}</p>
+      <p className="text-[10px] text-indigo-200 opacity-70">{sub}</p>
+    </div>
+  );
+}
+
+function EmptyState({ icon: Icon, text }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-slate-400 opacity-60">
+      <Icon size={40} strokeWidth={1.5} className="mb-2" />
+      <p className="text-sm font-medium">{text}</p>
+    </div>
+  );
+}
